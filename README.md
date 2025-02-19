@@ -1,0 +1,1 @@
+# method_seminar_improving_your_statistical_inferences_through_simulation_studies_in_R
