@@ -6,6 +6,8 @@ This course uses Monte-Carlo simulation studies to teach participants to improve
 
 All simulations are implemented in R using a specific workflow written in {tidyverse} and {purrr} that is designed to maximise ease of writing, interpreting, and reusing code - sometimes at the expense of the speed at which the code runs at. Researchers who are already familiar with writing simulations whose simulations may be more computationally intensive should consider implementing them in other dedicated packages such as {SimDesign} or {simhelpers}.
 
+This repo is structured as follows: Besides this README the syllabus is presented on the front page. Further, every content of a lesson and the assignment has their own folder. Within each folder for a respective lesson the files are further differentiated, if they have been provided by the seminar teacher (see source below) or, if they have been either adapted or created by myself. First named are stored within provided folders, last named are stored within created folders.  
+
 All original material of the course can be found here:
 
 Hussey (2024) Improving your statistical inferences through simulation studies in R. https://github.com/ianhussey/simulation-course.
