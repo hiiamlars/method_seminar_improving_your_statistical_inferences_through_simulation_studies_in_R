@@ -195,30 +195,27 @@ t_test_p_value(data_simulated)
 
 ```{r}
 
-mean_drop_na <- function(x) {
-  
-res <- x |> 
-  dplyr::summarize(mean = mean(score, na.rm = TRUE))
+mean_drop_na <- function(data) {
+
+res <- data |> 
+  summarize(mean = mean(score, na.rm = TRUE))
 
 return(res)
-
 }
 
 mean_drop_na(data_simulated)
-
 ```
 
 ## Calculate SD dropping NAs
 
 ```{r}
 
-sd_drop_na <- function(x) {
-  
-res <- x |> 
-  dplyr::summarize(sd = sd(score, na.rm = TRUE))
+sd_drop_na <- function(data) {
+
+res <- data |> 
+  summarize(sd = sd(score, na.rm = TRUE))
 
 return(res)
-
 }
 
 sd_drop_na(data_simulated)
@@ -229,17 +226,16 @@ sd_drop_na(data_simulated)
 
 ```{r}
 
-mean_drop_na_con <- function(x) {
-  
-  res <- x |> 
-  dplyr::group_by(condition) |> 
-  dplyr::summarize(mean = mean(score, na.rm = TRUE))
+mean_per_condition_drop_na <- function(data) {
+
+res <- data |> 
+  group_by(condition) |> 
+  summarize(mean = mean(data$score, na.rm = TRUE))
 
 return(res)
-  
 }
 
-mean_drop_na_con(data_simulated)
+mean_per_condition_drop_na(data_simulated)
 
 ```
 
@@ -247,37 +243,33 @@ mean_drop_na_con(data_simulated)
 
 ```{r}
 
-mean_sd_drop_na_con <- function(x) {
-  
-  res <- x |> 
-  dplyr::group_by(condition) |> 
-  dplyr::summarize(mean = mean(score, na.rm = TRUE), sd = sd(score, na.rm = TRUE))
+mean_and_sd_per_condition_drop_na <- function(data) {
+
+res <- data |> 
+  group_by(condition) |> 
+  summarize(mean = mean(data$score, na.rm = TRUE), sd = sd(data$score, na.rm = TRUE))
 
 return(res)
-  
 }
 
-mean_sd_drop_na_con(data_simulated)
+mean_and_sd_per_condition_drop_na(data_simulated)
 
 ```
 
 ## Calculate mean and SD for each condition dropping NAs, then use them to calculate Cohen's d
 
 ```{r}
+cohens_d_per_condition <- function(data) {
 
-cohens_d <- function(x) {
-  
-res <- x |> 
-  dplyr::group_by(condition) |> 
-  dplyr::summarize(mean = mean(score, na.rm = TRUE), sd = sd(score, na.rm = TRUE))
+res <- data |> 
+  group_by(condition) |> 
+  summarize(mean = mean(data$score, na.rm = TRUE), sd = sd(data$score, na.rm = TRUE)) |> 
+  mutate(cohens_d = (mean[1] - mean[2]) / sqrt((sd[1]^2 + sd[2]^2) / 2))
 
-sd_pooled <- sqrt(((50-1) * res$mean[1] + (50-1) * res$mean[2]) / (50+50-2))
-
-return(sd_pooled)
-  
+return(res)
 }
 
-cohens_d(data_simulated)
+cohens_d_per_condition(data_simulated)
 
 ```
 
@@ -294,7 +286,8 @@ data_simulated <- tibble(Y = rnorm(n = 100, mean = 0, sd = 1),
 
 cor_extraction <- function(data){
   
-  # do stuff
+res <- tibble(cor = cor.test(data$Y, data$X)$estimate,
+              p_value = cor.test(data$Y, data$X)$p.value)
   
   return(res)
 }
@@ -316,7 +309,8 @@ data_simulated <- tibble(Y = rnorm(n = 100, mean = 0, sd = 1),
 
 cor_extraction <- function(data){
   
-  # do stuff
+res <- tibble(cor = cor.test(data$Y, data$X, method = "pearson")$estimate,
+              p_value = cor.test(data$Y, data$X)$p.value)
   
   return(res)
 }
@@ -338,7 +332,8 @@ data_simulated <- tibble(Y = rnorm(n = 100, mean = 0, sd = 1),
 
 cor_extraction <- function(data){
   
-  # do stuff
+res <- tibble(cor = cor.test(data$Y, data$X, method = "pearson")$estimate,
+              p_value = cor.test(data$Y, data$X)$p.value)
   
   return(res)
 }
@@ -371,7 +366,8 @@ data_simulated <-
 
 extract_d <- function(data){
   
-  # do stuff
+res <- tibble(cohens_d = effsize::cohen.d(data$score ~ data$condition)$estimate,
+              conhens_d_int = effsize::cohen.d(data$score ~ data$condition)$conf.int)
   
   return(res)
 }
@@ -402,11 +398,14 @@ data_simulated <-
 
 analyze_data <- function(data) {
   
-  # do stuff
+res <- tibble(t_test_p_value = t.test(data$score ~ data$condition)$p.value,
+              cohens_d = effsize::cohen.d(data$score ~ data$condition)$estimate,
+              cohens_d_int = effsize::cohen.d(data$score ~ data$condition)$conf.int)
   
   return(res)
 }
 
+analyze_data(data_simulated)
 ```
 
 ## Generate data for a between groups design
@@ -434,7 +433,19 @@ data_simulated <-
 
 generate_data <- function(){
   
-  # do stuff
+# use this *code* to build your data generation function
+data_simulated_intervention <- tibble(condition = "intervention", 
+                                      score = rnorm(n = 50, mean = 0, sd = 1))
+
+data_simulated_control <- tibble(condition = "control", 
+                                 score = rnorm(n = 50, mean = 0, sd = 1))
+
+data_simulated <- 
+  bind_rows(data_simulated_intervention,
+            data_simulated_control) |>
+  # control's factor levels must be ordered so that intervention is the first level and control is the second
+  # this ensures that positive cohen's d values refer to intervention > control and not the other way around.
+  mutate(condition = fct_relevel(condition, "intervention", "control"))
   
   return(data_simulated)
 }
@@ -452,7 +463,19 @@ Goal: What if we want to generate data with a different number of participants p
 
 generate_data <- function(n_per_group){
   
-  # do stuff
+# use this *code* to build your data generation function
+data_simulated_intervention <- tibble(condition = "intervention", 
+                                      score = rnorm(n = n_per_group, mean = 0, sd = 1))
+
+data_simulated_control <- tibble(condition = "control", 
+                                 score = rnorm(n = n_per_group, mean = 0, sd = 1))
+
+data_simulated <- 
+  bind_rows(data_simulated_intervention,
+            data_simulated_control) |>
+  # control's factor levels must be ordered so that intervention is the first level and control is the second
+  # this ensures that positive cohen's d values refer to intervention > control and not the other way around.
+  mutate(condition = fct_relevel(condition, "intervention", "control"))
   
   return(data_simulated)
 }
@@ -468,8 +491,8 @@ bind_rows(
     analyze_data(),
   generate_data(n_per_group = 250) |>
     analyze_data(),
-) |>
-  mutate(ci_width = cohens_d_ci_upper - cohens_d_ci_lower) |>
+) |> 
+  summarize(ci_width = max(cohens_d_int) - min(cohens_d_int)) |>
   select(ci_width)
 
 ```
@@ -482,7 +505,19 @@ Goal: Rewrite the data generation function to make it even more flexible: make a
 
 generate_data <- function(n_intervention, n_control = NA, m_intervention = 0, m_control = 0, sd_intervention = 1, sd_control = 1){
   
-  # do stuff
+# use this *code* to build your data generation function
+data_simulated_intervention <- tibble(condition = "intervention", 
+                                      score = rnorm(n = n_intervention, mean = m_intervention, sd = sd_intervention))
+
+data_simulated_control <- tibble(condition = "control", 
+                                 score = rnorm(n = n_control, mean = m_intervention, sd = sd_intervention))
+
+data_simulated <- 
+  bind_rows(data_simulated_intervention,
+            data_simulated_control) |>
+  # control's factor levels must be ordered so that intervention is the first level and control is the second
+  # this ensures that positive cohen's d values refer to intervention > control and not the other way around.
+  mutate(condition = fct_relevel(condition, "intervention", "control"))
   
   return(data_simulated)
 }
