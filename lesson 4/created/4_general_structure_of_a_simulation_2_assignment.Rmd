@@ -273,11 +273,11 @@ generate_data <- function(n_per_condition,
                           sd) {
   
   data_control <- 
-    tibble(condition = "control",
+    tibble(condition = "control", levels = c("intervention", "control"),
            score = rnorm(n = n_per_condition, mean = mean_control, sd = sd))
   
   data_intervention <- 
-    tibble(condition = "intervention",
+    tibble(condition = "intervention", levels = c("intervention", "control"),
            score = rnorm(n = n_per_condition, mean = mean_intervention, sd = sd))
   
   data_combined <- bind_rows(data_control,
@@ -297,7 +297,8 @@ analyze <- function(data) {
   res <- tibble(p = res_t_test$p.value)
   
   res_cohens_d <- effsize::cohen.d(formula = score ~ condition,
-                                   data = data)
+                                   data = data,
+                                   pooled = TRUE)
 
   res2 <- tibble(cohens_d = res_cohens_d$estimate)
     
@@ -355,7 +356,7 @@ ggplot(simulation_summary, aes(population_effect_size, average_cohens_d)) +
   geom_col() +
   theme_linedraw() +
   scale_y_continuous(breaks = breaks_pretty(n = 10),
-                     limits = c(-1,1),
+                     limits = c(0,1),
                      name = "Mean estimate of cohens d") +
   scale_x_discrete(name = "Population effect size")
 

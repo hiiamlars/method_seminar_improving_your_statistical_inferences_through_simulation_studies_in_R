@@ -1,0 +1,87 @@
+---
+title: "General structure of a simulation study"
+author: "Lars Schilling"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r}
+library(tidyverse)
+library(purrr)
+```
+
+# Writting functions
+```{r}
+
+generate <- function(n_per_condition,
+                          mean_control,
+                          mean_treatment,
+                          sd){
+  
+  set.seed(42)
+  
+  data_control <- 
+    tibble(
+      condition = "control",
+      score = rnorm(n = n_per_condition, mean = mean_control, sd = sd)
+    )
+  
+  data_treatment <-
+    tibble(
+      condition = "treatment",
+      score = rnorm(n = n_per_condition, mean = mean_treatment, sd = sd)
+    )
+  
+  data_combined <- 
+    rbind(data_control, data_treatment)
+  
+  return(data_combined)
+  
+}
+
+analyze <- function(data){
+  
+  res_t_test <- t.test(formula = score ~ condition,
+                       data = data,
+                       var.equal = TRUE,
+                       alternative = "two.sided")
+  
+  t_test_p_value <- tibble(p_value = res_t_test$p.value)
+  
+  return(t_test_p_value)
+  
+}
+
+```
+
+# Generate data
+```{r}
+experiment_parameters <- expand_grid(
+  n_per_condition = 50,
+  mean_control = 0,
+  mean_treatment = c(0, 0.5),
+  sd = 1,
+  iterations = 1:1000
+)
+```
+
+# Run simulation
+```{r}
+simulation <- experiment_parameters |> 
+  mutate(generate_data = pmap(list(n_per_condition,
+                                         mean_control,
+                                         mean_treatment,
+                                         sd),
+                                    generate
+                                    )
+         ) |> 
+  mutate(results = pmap(list(generate_data),
+                         analyze))
+```
+
+# Summarize it
+```{r}
+simulation_summary <- simulation |> 
+  unnest(results)
+```
+

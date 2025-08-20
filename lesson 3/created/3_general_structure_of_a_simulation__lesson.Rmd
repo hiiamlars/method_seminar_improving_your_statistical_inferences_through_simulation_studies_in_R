@@ -1,7 +1,7 @@
 ---
 title: "General structure of a simulation study"
 subtitle: "Using the example of estimating the statistical power of Student's independent *t*-test"
-author: "Ian Hussey"
+author: "Lars Schilling"
 date: "`r format(Sys.time(), '%d %B, %Y')`"
 output:
   html_document:

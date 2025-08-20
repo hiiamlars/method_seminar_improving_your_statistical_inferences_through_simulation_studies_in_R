@@ -1,0 +1,695 @@
+---
+title: "Influence of skewed data in combination with randomly drawn data exclusion methods"
+author: "Lars Schilling"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+    code_download: true
+    code_folding: show
+    highlight: haddock
+    theme: flatly
+    toc: yes
+    toc_float: yes
+---
+
+# Citation & License
+
+Citation: 
+
+Lars Schilling (2024) Influence of skewed data in combination to randomly drawn data exclusion methods on the false-positive rate and the power. https://github.com/hiiamlars/method_seminar_improving_your_statistical_inferences_through_simulation_studies_in_R
+
+License:
+
+[CC BY 4.0](https://creativecommons.org/licenses/by/4.0/deed.en)
+
+```{r global options, include=FALSE}
+
+# Set default chunk options
+knitr::opts_chunk$set(message = FALSE,
+                      warning = FALSE)
+
+# Disable scientific notation
+options(scipen = 999) 
+
+```
+
+# Load dependencies
+
+```{r message=FALSE}
+
+  if (!requireNamespace("tidyverse", quietly = TRUE)) {
+    install.packages("tidyverse")
+  }
+
+  if (!requireNamespace("sn", quietly = TRUE)) {
+    install.packages("sn")
+  }
+
+  if (!requireNamespace("kableExtra", quietly = TRUE)) {
+    install.packages("kableExtra")
+  }
+
+# dependencies
+library(tidyverse)
+library(sn)
+library(kableExtra)
+
+```
+
+# Outline
+
+The goal of the following simulation is to investigate the influence of skewness in the data exclusion process on the false positive rate and on power for linear regressions. **The research question is the following: How is the false-positive rate and the power for a simple coefficient of a linear regression influenced by the data exclusion methods and by skewness of the data?**
+
+The first chunk will define the general simulation functions, namely the `generate_data`-function and the `analyze_data_lm`-function. Within the next chunk, the 12 different `remove_outliers_*`-functions are defined. The syntax for the data exclusions functions has been adopted by Stefan and Schönbrondt (2023). The workflow continues with a chunk in which the`expand_grid` call sets up the parameters for the whole simulation. Note that besides the sample size also the effect size and the skewness varies. This adopts the approach from Stefan and Schänbrondt (2023) and adds the parameter skewness to the simulation. This is in line with the research question. The following chunk runs the simulation itself. The `summary` chunk calculates the proportion of significant results across all combinations of parameters. The last chunk presents the results of the simulation once for the case of a true effect (the power) and once for the case of no true effect (the false-positive rate). The findings are discussed in combination with the publication of Stefan and Schönbrodt (2023) and in perspective of the additional skewness parameter.
+
+The general workflow was adopted from the seminar "Improving your statistical inferences through simulation studies in R" (https://github.com/ianhussey/simulation-course), by Ian Hussey (2024). 
+
+# Define general functions
+
+The simulation will be carried out on both non-skewed normal between-subject and skewed normal between-subject data. The condition variable X is binary, the variable Y is discrete. The `generate_data` function creates the respective data set. The function `analyze_data_lm` runs a linear regression on the data set and gives out a p-value for the regression slope.
+
+```{r general functions}
+
+# Define data generating function ----
+generate_data <- function(n,
+                          location_control, # Location, akin to mean
+                          location_intervention,
+                          scale, # Scale, akin to SD
+                          skew) { # Slant/skew. When 0, produces normal/gaussian data
+  
+  
+  data_control <- 
+    tibble(condition = "control",
+           score = rsn(n = n, 
+                       xi = location_control, # Location, akin to mean
+                       omega = scale, # Scale, akin to SD
+                       alpha = skew)) # Slant/skew. When 0, produces normal/gaussian data
+  
+  data_intervention <- 
+    tibble(condition = "intervention",
+           score = rsn(n = n, 
+                       xi = location_intervention, # Location, akin to mean
+                       omega = scale, # Scale, akin to SD
+                       alpha = skew)) # Slant/skew. When 0, produces normal/gaussian data
+  
+  data <- bind_rows(data_control,
+                    data_intervention) 
+  
+  return(data)
+}
+
+# Define data analysis function ----
+analyze_data_lm <- function(data, condition, score) {
+  
+  # Fit linear regression: score ~ condition
+  model <- lm(score ~ condition,
+              data = data,
+              na.action = na.omit) # leaves out the outliers, as the outlier functions mark such values as as NA's (see below)
+  
+  # Extract the p-value for the 'condition' coefficient
+  p_values <- broom::tidy(model) |> 
+    filter(term == "conditionintervention") |> 
+    pull(p.value)
+  
+  return(p_values)
+  
+}
+
+```
+
+# Define outlier functions
+
+Every method to identify and exclude outliers is defined by an own function. For more details on each function see Stefan and Schönbrondt (2023), 3.4 *Outlier exclusion* or their GitHub repository: https://github.com/astefan1/phacking_compendium/blob/master/phackR/R/outlierExclusion.R
+
+To keep the data structure we used throughout the seminar, other than in the paper form Stefan and Schönbrodt (2023), X is not considered as a variable which can potentially include outliers. Further, some functions are simplified in their exclusion criteria or the syntax is slightly changed to state the exclusion rule in more detail. However, any changes of the outlier functions should not negatively impact external validity of the simulation.
+
+```{r outlier functions}
+
+# Remove by boxplot ----
+remove_outliers_boxplot <- function(data) {
+  
+  # Extract relevant values
+  y <- data$score
+  
+  # Identify outliers
+  outliers <- graphics::boxplot(y, plot = FALSE)$out
+  
+  # Replace outliers
+  score_boxplot <- ifelse(y %in% outliers, NA, y)
+  
+  # Return as tibble
+  res <-tibble(condition = data$condition,
+               score_boxplot = score_boxplot)
+  
+  return(res)
+}
+
+# Remove by Stem & Leaf ----
+remove_outliers_stemleaf <- function(data) {
+  
+  # Extract relevant values
+  y <- data$score
+  
+  # Run stemleaf
+  stemleaf_y <- utils::capture.output(aplpack::stem.leaf(y)) # grabs the output
+  
+  # Flag outliers
+  outlier_lines <- stemleaf_y[c(grep("LO: ", stemleaf_y), grep("HI: ", stemleaf_y))] # grabs relevant columns
+  outliers <- unlist(strsplit(outlier_lines, " ")) # separates entries within a line
+  outliers <- as.numeric(outliers[!outliers %in% c("LO:", "HI:")]) # extracts numeric values only
+  
+  # Replace outliers
+  score_stemleaf <- ifelse(y %in% outliers, NA, y) # Note: Flaggin outliers as NAs is only possible in case of this simulation as the data generation process is under total control. Else this approach should be dealth with carefully
+  
+  # Return as tibble
+  res <-tibble(condition = data$condition,
+               score_stemleaf = score_stemleaf)
+  
+  return(res)
+}
+
+# Remove by SD ----
+remove_outliers_sd <- function(data, sd_bound = 2) {
+  
+  # Extract relevant values
+  y <- data$score
+  
+  # Calculate Mean and SD of score
+  mean_y <- mean(y, na.rm = TRUE)
+  sd_y <- sd(y, na.rm = TRUE)
+  
+  # Define thresholds
+  lower_bound <- mean_y - sd_bound * sd_y # Note: Unlike Stefan and Schönbrodt (2023), this function uses a fixed (but changeable) sd_bound
+  
+  upper_bound <- mean_y + sd_bound * sd_y # Note: Unlike Stefan and Schönbrodt (2023), this function uses a fixed (but changeable) sd_bound
+  
+  # Replace scores
+  score_sd <- ifelse(y >= lower_bound & y <= upper_bound, y, NA)
+  
+  # Return tibble
+  res <- tibble(condition = data$condition,
+                score_sd = score_sd)
+  
+  return(res)
+}
+
+# Remove by quantile ----
+remove_outliers_trimmed <- function(data, trim_percent = 0.05) { # Note: The choice of trim_percent is arbitrary and could have been set to a different input
+  
+  # Define thresholds
+  lower_cutoff <- quantile(data$score, probs = trim_percent) # Note: Unlike Stefan and Schönbrodt (2023), this function uses a fixed (but changeable) trim_percent
+  upper_cutoff <- quantile(data$score, probs = 1 - trim_percent) # Note: Unlike Stefan and Schönbrodt (2023), this function uses a fixed (but changeable) trim_percent
+  
+  # Replace scores
+  score_trimmed <- ifelse(data$score >= lower_cutoff & data$score <= upper_cutoff, data$score, NA)
+  
+  # Return tibble
+  res <- tibble(condition = data$condition,
+                score_trimmed = score_trimmed)
+  
+  return(res)
+}
+
+# Remove by standardized residuals ----
+remove_outliers_sta_residuals <- function(data) {
+  
+  # Fit the linear model
+  model <- lm(score ~ condition, data = data)
+  
+  # Calculate standardized residuals
+  sta_residual <- rstandard(model)
+  
+  # Identify top 3 absolute residuals
+  top3_sta_idx  <- order(abs(sta_residual), decreasing = TRUE)[1:3] # Note: Unlike Stefan and Schönbrodt (2023), this function considers the top 3 absolute residuals in any case no matter the value of the highest one
+  
+  # Replace scores
+  score_sta_residual <- ifelse(seq_along(sta_residual) %in% top3_sta_idx, NA, data$score)
+  
+  # Return tibble
+  res <- tibble(condition = data$condition,
+                score_sta_residual = score_sta_residual)
+  
+  return(res)
+}
+
+# Remove by studentized residuals ----
+remove_outliers_stu_residuals <- function(data) {
+  
+  # Fit the linear model
+  model <- lm(score ~ condition, data = data)
+  
+  # Calculate studentized residuals
+  stu_residual <- rstudent(model)
+  
+  # Identify top 3 absolute residuals
+  top3_stu_idx  <- order(abs(stu_residual), decreasing = TRUE)[1:3] # Note: Unlike Stefan and Schönbrodt (2023), this function considers the top 3 absolute residuals in any case no matter the value of the highest one
+  
+  # Replace scores
+  score_stu_residual <- ifelse(seq_along(stu_residual) %in% top3_stu_idx, NA, data$score)
+  
+  # Return tibble
+  res <- tibble(condition = data$condition,
+                score_stu_residual = score_stu_residual)
+  
+  return(res)
+}
+
+# Remove by DFBETA ----
+remove_outliers_dfbeta <- function(data) {
+  
+  # Fit linear model
+  model <- lm(score ~ condition, data = data)
+  
+  # Compute DFBETAS
+  dfbeta_values <- data.frame(dfbetas(model))$condition
+  
+  # Identify top 3 absolute DFBEATS
+  top3_dfbetas  <- order(abs(dfbeta_values), decreasing = TRUE)[1:3] # Note: Unlike Stefan and Schönbrodt (2023), this function considers only the exclusion of the top three DFBETAs
+  
+  # Replace scores
+  score_dfbeta <- ifelse(seq_along(dfbeta_values) %in% top3_dfbetas, NA, data$score)
+  
+  # Return as tibble
+  res <- tibble(dfbeta_values = dfbeta_values,
+                condition = data$condition,
+                score_dfbeta = score_dfbeta)
+  
+  return(res)
+}
+
+# Remove by DFFITS threshold ----
+remove_outliers_dffits <- function(data) {
+  
+  # Fit linear regression model
+  model <- lm(score ~ condition, data = data)
+  
+  # Calculate DFFITS values
+  dffits_values <- dffits(model)
+  
+  # Number of observations
+  n <- nrow(data)
+  
+  # Define threshold
+  threshold <- 2 * sqrt(2 / n) # Exclusion criteria as in Stefan and Schönbrodt (2023)
+  
+  # Replace scores
+  score_dffits <- ifelse(abs(dffits_values) > threshold, NA, data$score)
+  
+  # Return as tibble 
+  res <- tibble(dffits_values = dffits_values,
+                condition = data$condition,
+                score_dffits = score_dffits)
+  
+  return(res)
+}
+
+# Remove by Cooks Distance ----
+remove_outliers_cooks <- function(data) {
+  
+  # Fit the linear model
+  model <- lm(score ~ condition, data = data)
+  
+  # Compute Cook's distance
+  cooks_d <- cooks.distance(model)
+  
+  # Degrees of freedom
+  n <- nobs(model)  # Number of observations
+  p <- length(coefficients(model))  # Number of parameters including intercept
+  
+  # Calculate threshold
+  threshold <- min(stats::qf(0.5, df1 = p, df2 = n - p), 1) # Exclusion criteria as in Stefan and Schönbrodt (2023)
+  
+  # Replace scores
+  score_cooks <- ifelse(cooks_d > threshold, NA, data$score)
+  
+  # Return as tibble
+  res <- tibble(cooks_distance = cooks_d,
+                condition = data$condition,
+                score_cooks = score_cooks)
+  
+  return(res)
+}
+
+# Remove by covariance ----
+remove_outliers_covratio <- function(data) {
+  
+  # Fit the linear model
+  model <- lm(score ~ condition, data = data)
+  
+  # Extract covariance ratios values safely
+  covratio <- covratio(model)
+  
+  # Number of parameters (including intercept) and sample size
+  p <- length(coef(model))
+  n <- nrow(data)
+  
+  # Define threshold for exclusion
+  threshold <- 3 * p / n # Note: Stefan and Schönbrodt (2023) do not explicitly state this cutoff logic
+  
+  # Flag outliers: abs difference from 1 above threshold
+  score_covratio <- ifelse(abs(covratio - 1) > threshold, NA, data$score)
+  
+  # Return tibble with new score column
+  res <- tibble(cov_ratio = abs(covratio - 1),
+                condition = data$condition,
+                score_covratio = score_covratio)
+  
+  return(res)
+}
+
+# Remove by robust mahalanobis distance ----
+remove_outliers_mahalanobis <- function(data) {
+  
+  # Prepare data
+  dat <- data |> 
+    mutate(condition = ifelse(condition == "control", 0, 1)) |> 
+    select(condition, score)
+  
+  # Calculate mahalanobis distance
+  mdist <- mahalanobis(dat, colMeans(dat), cov(dat))
+  
+  # Calculate threshold
+  threshold <- qchisq(0.975, df = 2) # Exclusion criteria as described in Stefan and Schönbrodt (2023)
+  
+  # Replace scores
+  score_mahalanobis <- ifelse(mdist^2 > threshold, NA, data$score)
+  
+  # Return as tibble
+  res <- tibble(mahlanobis_distance = mdist,
+                condition = data$condition,
+                score_mahalanobis = score_mahalanobis)
+  
+  return(res)
+}
+
+# remove by leverage values ----
+remove_outliers_leverage <- function(data) {
+  
+  # Fit linear model
+  mod <- lm(score ~ condition, data = data)
+  
+  # Compute leverage values
+  levs <- stats::hatvalues(mod)
+  
+  # Number of predictors including intercept (p)
+  p <- length(coef(mod))
+  n <- nrow(data)
+  
+  # Calculate threshold
+  threshold <- 3 * (p / n) # Exclusion criteria as in Stefan and Schönbrodt (2023)
+  
+  # Replace scores
+  score_leverage <- ifelse(levs >= threshold, NA, data$score)
+  
+  # Return as tibble
+  res <- tibble(leverages = levs,
+                condition = data$condition,
+                score_leverage = score_leverage)
+  
+  return(res)
+}
+
+```
+
+# Prepare simulation
+
+The simulation does run on varying parameters of sample size (n), skewness (skew) and effct size (mu_intervention), once with no true effect and once with a true effect. With `expand_grid` these parameters are set up and can be used as inputs for the simulation.
+
+```{r parameters}
+
+# Define experiment parameters
+experiment_parameters <- expand_grid(
+  n = c(30, 50, 100, 300), # Varies as in Stefand and Schönbrodt (2023)
+  mu_control = 0,
+  mu_intervention = c(0, 0.5), # Once with no true effect and once with a true effect
+  sigma = 1,
+  skew = c(-2, 0, 2), # Varies
+  iteration = 1:1000
+) |>
+  # Calculate skew-normal parameters
+  mutate(delta = skew / sqrt(1 + skew^2),
+         scale = sigma / sqrt(1 - 2 * delta^2 / pi),
+         location_control = mu_control - scale * delta * sqrt(2 / pi),
+         location_intervention = mu_intervention - scale * delta * sqrt(2 / pi)) 
+
+```
+
+# Simulation
+
+In the first pmap-call, `generate_data()` takes the input parameters of the `experiment_parameters` data set and creates the dataset `outliers_none` with the X and all Y variables. These are used in the first application of `analyze_data_lm` to run linear regressions. In this specific case the resultung `p_value`s are calculated without any data exclusion. But from here on, any pmap-call applies the respective `remove_outliers_*()` function on the data set `outliers_none` and only then applies `analyze_data_lm` on this altered data set. The resulting p-values are calculated with the before excluded data points.
+
+```{r simulation}
+
+# Set the seed
+set.seed(42)
+
+# Run simulation
+simulation <- 
+  experiment_parameters |>
+  mutate(outliers_none = pmap(list(n,
+                                   location_control,
+                                   location_intervention,
+                                   scale,
+                                   skew),
+                              generate_data)) |>
+  mutate(p_value = pmap(list(data = outliers_none,
+                             condition = map(outliers_none, ~ .x$condition),
+                             score = map(outliers_none, ~ .x$score)),
+                        analyze_data_lm)) |> 
+  mutate(outliers_boxplot = pmap(list(outliers_none),
+                                 remove_outliers_boxplot)) |> 
+  mutate(p_value_boxplot = pmap(list(outliers_boxplot,
+                                     condition = map(outliers_boxplot, ~ .x$condition),
+                                     score = map(outliers_boxplot, ~ .x$score_boxplot)),
+                                analyze_data_lm)) |> 
+  mutate(outliers_stemleaf = pmap(list(outliers_none),
+                                  remove_outliers_stemleaf)) |> 
+  mutate(p_value_stemleaf = pmap(list(outliers_stemleaf,
+                                      condition = map(outliers_stemleaf, ~ .x$condition),
+                                      score = map(outliers_stemleaf, ~ .x$score_stemleaf)),
+                                 analyze_data_lm)) |> 
+  mutate(outliers_sd = pmap(list(outliers_none),
+                            remove_outliers_sd)) |> 
+  mutate(p_value_sd = pmap(list(outliers_sd,
+                                condition = map(outliers_sd, ~ .x$condition),
+                                score = map(outliers_sd, ~ .x$score_sd)),
+                           analyze_data_lm)) |> 
+  mutate(outliers_trimmed = pmap(list(outliers_none),
+                                 remove_outliers_trimmed)) |>  
+  mutate(p_value_trimmed = pmap(list(outliers_trimmed,
+                                     condition = map(outliers_trimmed, ~ .x$condition),
+                                     score = map(outliers_trimmed, ~ .x$score_trimmed)),
+                                analyze_data_lm)) |> 
+  mutate(outliers_sta_residuals = pmap(list(outliers_none),
+                                       remove_outliers_sta_residuals)) |> 
+  mutate(p_value__sta_residuals = pmap(list(outliers_sta_residuals,
+                                            condition = map(outliers_sta_residuals, ~ .x$condition),
+                                            score = map(outliers_sta_residuals, ~ .x$score_sta_residual)),
+                                       analyze_data_lm)) |> 
+  mutate(outliers_stu_residuals = pmap(list(outliers_none),
+                                       remove_outliers_stu_residuals)) |> 
+  mutate(p_value__stu_residuals = pmap(list(outliers_stu_residuals,
+                                            condition = map(outliers_stu_residuals, ~ .x$condition),
+                                            score = map(outliers_stu_residuals, ~ .x$score_stu_residual)),
+                                       analyze_data_lm)) |> 
+  mutate(outliers_dfbeta = pmap(list(outliers_none),
+                                remove_outliers_dfbeta)) |> 
+  mutate(p_value_dfbeta = pmap(list(outliers_dfbeta,
+                                    condition = map(outliers_dfbeta, ~ .x$condition),
+                                    score = map(outliers_dfbeta, ~ .x$score_dfbeta)),
+                               analyze_data_lm)) |> 
+  mutate(outliers_dffits = pmap(list(outliers_none),
+                                remove_outliers_dffits)) |> 
+  mutate(p_value_dffits = pmap(list(outliers_dffits,
+                                    condition = map(outliers_dffits, ~ .x$condition),
+                                    score = map(outliers_dffits, ~ .x$score_dffits)),
+                               analyze_data_lm)) |> 
+  mutate(outliers_cooks = pmap(list(outliers_none),
+                               remove_outliers_cooks)) |> 
+  mutate(p_value_cooks = pmap(list(outliers_cooks,
+                                   condition = map(outliers_cooks, ~ .x$condition),
+                                   score = map(outliers_cooks, ~ .x$score_cooks)),
+                              analyze_data_lm)) |>   
+  mutate(outliers_cov = pmap(list(outliers_none),
+                             remove_outliers_covratio)) |> 
+  mutate(p_value_cov = pmap(list(outliers_cov,
+                                 condition = map(outliers_cov, ~ .x$condition),
+                                 score = map(outliers_cov, ~ .x$score_covratio)),
+                            analyze_data_lm)) |> 
+  mutate(outliers_mahalanobis = pmap(list(outliers_none),
+                                     remove_outliers_mahalanobis)) |> 
+  mutate(p_value_mahalanobis = pmap(list(outliers_mahalanobis,
+                                         condition = map(outliers_mahalanobis, ~ .x$condition),
+                                         score = map(outliers_mahalanobis, ~ .x$score_mahalanobis)),
+                                    analyze_data_lm)) |> 
+  mutate(outliers_leverage = pmap(list(outliers_none),
+                                  remove_outliers_leverage)) |> 
+  mutate(p_value_leverage = pmap(list(outliers_leverage,
+                                      condition = map(outliers_leverage, ~ .x$condition),
+                                      score = map(outliers_leverage, ~ .x$score_leverage)),
+                                 analyze_data_lm))
+
+```
+
+# Summary
+
+Within the summary results across all the data exclusion methods are reduced.
+
+Within their publication, Stefan and Schönbrodt (2023) only consider either the case that either 3, 5 or 10 data exclusion methods are carried out by the imagined researchers. The choice between the 12 methods happens randomly. The function `select_columns` prepares the choice between the results of the 12 applied exclusion methods. The function `choose_pvalue` then identifies the p-value which would most likely been taken by researchers. The logic goes as follows: If researcher end up with a significant p-value after they apply an exclusion method they stop with any further analysis end report the significant p-value. If they run all the 3 (or 5 or 10) exclusion methods in their analysis and do not find any significant p-value then they report the lowest (still non-significant) p-value. Note that this procedure aims to replicate existing research practices as close as possible. If this is indeed case is of course open for debate. Note further that the code also includes the case that no exclusion method is applied. This should not simulate existing research practice but give a line of comparison across results.
+
+The last part of the summary organizes the results. The final table `simulation_summary` shows the proportion of significant results across all combinations which have been created in `experiment_parameters`.
+
+```{r summary}
+
+# Set the seed
+set.seed(42)
+
+# Define selection function ----
+select_columns <- function(data, number) {
+  
+  res <- data |>
+    select(starts_with("p_value")) |> # Select p_value columns
+    {\(x) select(x, 1, sample(2:ncol(x), number))}() |> # Select the p-value without any data exclusion and p-values from number-times different data exclusion p-values
+    colnames()
+  
+  return(res)
+  
+}
+
+# Define p-value selection ----
+choose_pvalue <- function(pvals) {
+  sig_idx <- which(pvals < 0.05) # Marks columns with significant p-value
+  if (length(sig_idx) > 0) {
+    return(pvals[min(sig_idx)])  # Takes the first significant p-value
+  } else {
+    return(min(pvals))            # Or takes the smallest p-value
+  }
+}
+
+# Random method selection # Note: The amount of exclusion mechanisms is alligned to Stefan and Schönbrodt (2023)
+selection_three <- select_columns(simulation, 3)
+selection_five <- select_columns(simulation, 5)
+selection_ten <- select_columns(simulation, 10)
+
+# Significance summary
+simulation_complete <- simulation %>%
+  rowwise() %>%
+  mutate(
+    p_value_three = choose_pvalue(c_across(all_of(selection_three))),
+    p_value_five = choose_pvalue(c_across(all_of(selection_five))),
+    p_value_ten = choose_pvalue(c_across(all_of(selection_ten)))
+  ) %>%
+  ungroup()
+
+# Summarize across iterations
+simulation_summary <- simulation_complete |> 
+  group_by(n, mu_intervention, skew) |> 
+  summarize(prop_sig = mean(p_value < 0.05), # The case for no data exclusion for comparison
+            prop_sig_three = mean(p_value_three < 0.05),
+            prop_sig_five = mean(p_value_five < 0.05),
+            prop_sig_ten = mean(p_value_ten < 0.05),
+            .groups = "drop")
+
+```
+
+# Results
+
+The table and plot display the proportion of significant slope values for the X variable in the linear regression, in dependence of the sample size, skewness and number of applied exclusion methods. The results are displayed separately for both cases, one time without and one time with a true effect size for the intervention group.
+
+```{r}
+
+simulation_summary |> 
+  filter(mu_intervention == 0) |> # Table for the case of no true effect
+  knitr::kable() |> 
+  kableExtra::kable_classic(full_width = FALSE)
+
+simulation_summary |>
+  filter(mu_intervention == 0.5) |> # Table for the case of a true effect
+  knitr::kable() |> 
+  kableExtra::kable_classic(full_width = FALSE)
+
+simulation_summary |>
+  filter(mu_intervention == 0) |>  # Plot for the case of no true effect
+  pivot_longer(
+    cols = c(prop_sig, prop_sig_three, prop_sig_five, prop_sig_ten),
+    names_to = "number_exclusion_methods",
+    values_to = "outcome") |>
+  mutate(number_exclusion_methods = factor(
+    number_exclusion_methods,
+    levels = c("prop_sig", "prop_sig_three", "prop_sig_five", "prop_sig_ten"),
+    labels = c("0 Methods", "3 Methods", "5 Methods", "10 Methods")
+  )) |> 
+  ggplot(aes(x = n, y = outcome, color = number_exclusion_methods, shape = as.factor(skew))) +
+  geom_hline(yintercept = 0.05, linetype = "dashed") +
+  geom_line(linewidth = 0.75, alpha = 0.6) +
+  scale_x_continuous(breaks = c(0, 30, 50, 100, 300)) +
+  scale_y_continuous(breaks = seq(0, 0.4, by = 0.1), limits = c(0, 0.4)) +
+  geom_point(aes(shape = as.factor(skew))) +
+  labs(
+    title = "Impact of Outlier Exclusion Methods and Skewness on the False-positive Rate",
+    subtitle = "Simulation Results for the Case of no True Effect",
+    caption = "Source: Lars Schilling (2025)",
+    x = "Sample Size",
+    y = "Prop. of significant results /\nFalse-positive rate",
+    color = "Nr. exclusion methods",
+    shape = "Skewness"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.subtitle = element_text(color = "#888888")
+  )
+
+simulation_summary |>
+  filter(mu_intervention == 0.5) |>  # Plot for the case of a true effect
+  pivot_longer(
+    cols = c(prop_sig, prop_sig_three, prop_sig_five, prop_sig_ten),
+    names_to = "number_exclusion_methods",
+    values_to = "outcome") |>
+  mutate(number_exclusion_methods = factor(
+    number_exclusion_methods,
+    levels = c("prop_sig", "prop_sig_three", "prop_sig_five", "prop_sig_ten"),
+    labels = c("0 Methods", "3 Methods", "5 Methods", "10 Methods")
+  )) |> 
+  ggplot(aes(x = n, y = outcome, color = number_exclusion_methods, shape = as.factor(skew))) +
+  geom_hline(yintercept = 0.80, linetype = "dashed") +
+  geom_line(linewidth = 0.75, alpha = 0.6) +
+  scale_x_continuous(breaks = c(0, 30, 50, 100, 300)) +
+  scale_y_continuous(breaks = seq(0, 1, by = 0.1), limits = c(0, 1)) +
+  geom_point(aes(shape = as.factor(skew))) +
+  labs(
+    title = "Impact of Outlier Exclusion Methods and Skewness on the True-positive Rate",
+    subtitle = "Simulation Results for the Case of a True Effect",
+    caption = "Source: Lars Schilling (2025)",
+    x = "Sample Size",
+    y = "Prop. of significant results /\nPower",
+    color = "Nr. exclusion methods",
+    shape = "Skewness"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.subtitle = element_text(color = "#888888")
+  )
+
+```
+
+**Interpretation**:
+
+First consider the impact of the amount of data exclusion methods on the false-positive rate. There is a general trend that applying more data exclusion methods increases the false-positive rate. However, the results for this look generally smaller than is the case in Stefan and Schönbrodt (2023). This might be caused by minor differences in the outlier functions. But more likely the reason is that Stefan and Schönbrodt also considered the variable X to include outliers.
+Besides that, the influence of the amount of data exclusion methods on the false-positive rate seems to decrease only very slightly with sample size. This is finding is in line with what Stefan and Schönbrodt observed. Their results do also not show strong indications for a main effect of sample size or an interaction between sample size and the amount of data exclusion methods on the false-positive rate.
+To summarize, it could be that trying out a larger amount of exclusion methods yields an observed, but non-existing effect. However, the difference in false-positive rates given any sample size is not much different. Therefore, this trend should be interpreted with caution. Further, the second part of the research question deals with a variation of data skewness. The simulation does not show a noticeable influence of skewness on the false-positive rate, neither across sample sizes nor across the amount of carried out data exclusion methods. The small effects at low sample sizes might be down to exactly this feature as they fade out later on.
+
+Now consider the impact of the amount of data exclusion methods in the true-positive rate (power). Stefan and Schönbrodt did not reported results from this perspective so there is no comparison with past results in this case. As a tendency, power increases with sample size. For low sample sizes, power is underneath or just at the the typical threshold of 80%, while higher sample sizes reach a power of (close to) 100%. There is barely any observable difference across the amount of data exclusion methods and/or skewness and the resulting power at a sample size of n = 300. This might be the case cause at such sample size a true effect will not vanish just cause single extreme data points have been excluded. More explicitly: At such sample sizes the effect is likely spread across so many of the data points that excluding only (some of) the most extreme ones will not impact the effect size inhibited in all the other ones. On the other hand, noteworthy: At small sample sizes, running more data exclusion methods improved the chance to identify the true effect by up to 20%.
+
+**Limitation / Outline**:
+
+There are notable differences between the publication from Stefan and Schönbrodt (2023) and this simulation. Most importantly, other than Stefan and Schönbrodt, this simulation considered X as a nominal variable only and did not checked for outliers in it. The setup was created in such way as to keep the familiar workflow. As mentioned in the interpretation, this might has impacted the results. Further, some of the data exclusion methods were altered slightly from Stefan and Schönbrodt. As the outlier-logic was kept or only changed in minor ways, these changes should not impact the main message of the results but it should be mentioned that cause of this (and the difference in the set up of the linear regression) the simulation is not a direct replication. Lastly, the present simulation does run on 1000 iterations only. This is barely a sufficient amount for precise results and this number was only choosen cause of hardware limitations.
+
+Considering these limitations, future simulations could follow on of three approaches: (1) Include mutiple variables in the data exclusion process, (2) Align more closely to the data exclusion process of Stefan and Schönbrodt while additionally consider the skewness variable as only this allows to isolate the effect of skewness and (3) Increase the iterations within the simulation as this increases the preciseness and might give insights into more subtle results.
+
+# Session info
+
+```{r}
+
+sessionInfo()
+
+```

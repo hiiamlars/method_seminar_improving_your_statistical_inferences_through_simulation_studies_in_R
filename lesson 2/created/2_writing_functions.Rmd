@@ -1,6 +1,6 @@
 ---
 title: "Practice writing R functions"
-author: "Ian Hussey"
+author: "Lars Schilling"
 date: "`r format(Sys.time(), '%d %B, %Y')`"
 output:
   html_document:
